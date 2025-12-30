@@ -124,7 +124,7 @@ export const getOrAddTorrent = (uri: string) =>
         // @ts-ignore
       },
       (torrent) => {
-        torrent.select(0, torrent.pieces.length - 1, false);
+        torrent.select(0, torrent.pieces.length - 1, 1);
         clearTimeout(timeout);
         resolve(torrent);
       }
@@ -221,7 +221,7 @@ export const pauseTorrent = (infoHash: string): boolean => {
   const torrent = findTorrent(infoHash);
   if (!torrent) return false;
   // Deselect all pieces to effectively pause
-  torrent.deselect(0, torrent.pieces.length - 1, false);
+  torrent.deselect(0, torrent.pieces.length - 1, 0);
   return true;
 };
 
@@ -229,7 +229,7 @@ export const resumeTorrent = (infoHash: string): boolean => {
   const torrent = findTorrent(infoHash);
   if (!torrent) return false;
   // Re‑select all pieces
-  torrent.select(0, torrent.pieces.length - 1, false);
+  torrent.select(0, torrent.pieces.length - 1, 1);
   return true;
 };
 
@@ -237,7 +237,7 @@ export const removeTorrent = async (infoHash: string): Promise<boolean> => {
   const torrent = findTorrent(infoHash);
   if (!torrent) return false;
   return await new Promise<boolean>((resolve) => {
-    streamClient.remove(torrent.infoHash, { destroyStore: !KEEPDOWNLOADEDFILES }, (err) => {
+    streamClient.remove(torrent.infoHash, { destroyStore: !KEEP_DOWNLOADED_FILES }, (err) => {
       if (err) {
         console.error("Error removing torrent", err);
         resolve(false);
