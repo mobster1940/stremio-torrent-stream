@@ -149,7 +149,7 @@ export const getStreamsFromTorrent = async (
   if (!torrentInfo) return [];
 
   let videos = torrentInfo.files.filter((file) => isVideoFile(file.name));
-
+  
   if (season && episode) {
     videos = videos.filter((file) =>
       isFileNameMatch(file.name, Number(season), Number(episode))

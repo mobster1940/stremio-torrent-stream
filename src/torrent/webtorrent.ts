@@ -122,9 +122,9 @@ export const getOrAddTorrent = (uri: string) =>
         path: DOWNLOAD_DIR,
         destroyStoreOnDestroy: !KEEP_DOWNLOADED_FILES,
         // @ts-ignore
-        deselect: true,
       },
       (torrent) => {
+        torrent.select(0, torrent.pieces.length - 1, false);
         clearTimeout(timeout);
         resolve(torrent);
       }
@@ -211,4 +211,40 @@ export const streamClosed = (hash: string, fileName: string) => {
   }, SEED_TIME);
 
   timeouts.set(hash, timeout);
+};
+
+export const findTorrent = (infoHash: string): Torrent | undefined => {
+  return streamClient.torrents.find((t) => t.infoHash === infoHash);
+};
+
+export const pauseTorrent = (infoHash: string): boolean => {
+  const torrent = findTorrent(infoHash);
+  if (!torrent) return false;
+  // Deselect all pieces to effectively pause
+  torrent.deselect(0, torrent.pieces.length - 1, false);
+  return true;
+};
+
+export const resumeTorrent = (infoHash: string): boolean => {
+  const torrent = findTorrent(infoHash);
+  if (!torrent) return false;
+  // Re‑select all pieces
+  torrent.select(0, torrent.pieces.length - 1, false);
+  return true;
+};
+
+export const removeTorrent = async (infoHash: string): Promise<boolean> => {
+  const torrent = findTorrent(infoHash);
+  if (!torrent) return false;
+  return await new Promise<boolean>((resolve) => {
+    streamClient.remove(torrent.infoHash, { destroyStore: !KEEPDOWNLOADEDFILES }, (err) => {
+      if (err) {
+        console.error("Error removing torrent", err);
+        resolve(false);
+      } else {
+        console.log("Removed torrent", torrent.name);
+        resolve(true);
+      }
+    });
+  });
 };

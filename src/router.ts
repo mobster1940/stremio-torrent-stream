@@ -7,14 +7,25 @@ import {
   getTorrentInfo,
   streamClosed,
   streamOpened,
+  pauseTorrent, 
+  resumeTorrent, 
+  removeTorrent
 } from "./torrent/webtorrent.js";
 import { getStreamingMimeType } from "./utils/file.js";
+import path from "path";
+import { fileURLToPath } from "url";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 export const router = Router();
 
-router.get("/stats", (req, res) => {
+router.get("api/stats", (req, res) => {
   const stats = getStats();
   res.json(stats);
+});
+
+router.get("/stats", (req, res) => {
+  res.sendFile(path.join(__dirname, "stats.html"));
 });
 
 router.get("/torrents/:query", async (req, res) => {
@@ -109,4 +120,16 @@ router.get("/stream/:torrentUri/:filePath", async (req, res) => {
   } catch (error) {
     res.status(500).end();
   }
+});
+
+router.post("/torrent/:hash/:action", async (req, res) => {
+  const { hash, action } = req.params;
+
+  let ok = false;
+  if (action === "pause") ok = pauseTorrent(hash);
+  else if (action === "resume") ok = resumeTorrent(hash);
+  else if (action === "remove") ok = await removeTorrent(hash);
+
+  if (!ok) return res.status(404).json({ error: "Torrent not found or action failed" });
+  res.json({ success: true });
 });

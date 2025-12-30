@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Torrent Stats</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #0f172a; color: #e5e7eb; margin: 0; padding: 24px; }
+    h1 { margin-bottom: 8px; }
+    .summary { display: flex; gap: 16px; margin-bottom: 24px; }
+    .card {
+      background: #020617;
+      border-radius: 12px;
+      padding: 16px 20px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+      min-width: 160px;
+    }
+    .card-title { font-size: 12px; text-transform: uppercase; color: #9ca3af; letter-spacing: .08em; }
+    .card-value { font-size: 20px; margin-top: 4px; }
+    table { width: 100%; border-collapse: collapse; background: #020617; border-radius: 12px; overflow: hidden; }
+    th, td { padding: 10px 12px; font-size: 13px; }
+    th { text-align: left; background: #020617; border-bottom: 1px solid #1e293b; color: #9ca3af; }
+    tr:nth-child(even) { background: #020617; }
+    tr:nth-child(odd) { background: #0b1120; }
+    .progress {
+      height: 6px;
+      border-radius: 999px;
+      background: #1e293b;
+      overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(to right, #22c55e, #3b82f6);
+    }
+    .btn {
+      border: none;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 11px;
+      cursor: pointer;
+      margin-right: 4px;
+      color: #0b1120;
+    }
+    .btn-pause { background: #f97316; }
+    .btn-resume { background: #22c55e; }
+    .btn-remove { background: #ef4444; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      background: #1e293b;
+    }
+  </style>
+</head>
+<body>
+  <h1>Torrent Stats</h1>
+  <div class="summary">
+    <div class="card">
+      <div class="card-title">Uptime</div>
+      <div class="card-value" id="uptime">–</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Active Torrents</div>
+      <div class="card-value" id="activeTorrents">0</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Download</div>
+      <div class="card-value" id="downloadSpeed">0 KB/s</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Upload</div>
+      <div class="card-value" id="uploadSpeed">0 KB/s</div>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Progress</th>
+        <th>Peers</th>
+        <th>Down</th>
+        <th>Up</th>
+        <th>Streams</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="torrentsBody"></tbody>
+  </table>
+
+  <script>
+    const fmtSpeed = (bytes) => {
+      if (!bytes) return "0 KB/s";
+      const kb = bytes / 1024;
+      const mb = kb / 1024;
+      return mb >= 1 ? mb.toFixed(1) + " MB/s" : kb.toFixed(0) + " KB/s";
+    };
+
+    const fmtProgress = (p) => ((p || 0) * 100).toFixed(1) + "%";
+
+    async function fetchStats() {
+      const res = await fetch("/api/stats");
+      if (!res.ok) return;
+      const data = await res.json();
+      document.getElementById("uptime").textContent = data.uptime;
+      document.getElementById("activeTorrents").textContent = data.activeTorrents.length;
+      document.getElementById("downloadSpeed").textContent = fmtSpeed(data.downloadSpeed);
+      document.getElementById("uploadSpeed").textContent = fmtSpeed(data.uploadSpeed);
+      renderTorrents(data.activeTorrents || []);
+    }
+
+    function renderTorrents(torrents) {
+      const body = document.getElementById("torrentsBody");
+      body.innerHTML = "";
+      torrents.forEach(t => {
+        const tr = document.createElement("tr");
+
+        const nameTd = document.createElement("td");
+        nameTd.textContent = t.name;
+        tr.appendChild(nameTd);
+
+        const progressTd = document.createElement("td");
+        const pct = (t.progress || 0) * 100;
+        progressTd.innerHTML = `
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div class="progress"><div class="progress-bar" style="width:${pct}%;"></div></div>
+            <span class="badge">${pct.toFixed(1)}%</span>
+          </div>
+        `;
+        tr.appendChild(progressTd);
+
+        const peersTd = document.createElement("td");
+        peersTd.textContent = t.peers;
+        tr.appendChild(peersTd);
+
+        const downTd = document.createElement("td");
+        downTd.textContent = fmtSpeed(t.downloadSpeed);
+        tr.appendChild(downTd);
+
+        const upTd = document.createElement("td");
+        upTd.textContent = fmtSpeed(t.uploadSpeed);
+        tr.appendChild(upTd);
+
+        const streamsTd = document.createElement("td");
+        streamsTd.textContent = t.openStreams || 0;
+        tr.appendChild(streamsTd);
+
+        const actionsTd = document.createElement("td");
+        const pauseBtn = document.createElement("button");
+        pauseBtn.className = "btn btn-pause";
+        pauseBtn.textContent = "Pause";
+        pauseBtn.onclick = () => sendAction(t.infoHash, "pause");
+
+        const resumeBtn = document.createElement("button");
+        resumeBtn.className = "btn btn-resume";
+        resumeBtn.textContent = "Start";
+        resumeBtn.onclick = () => sendAction(t.infoHash, "resume");
+
+        const removeBtn = document.createElement("button");
+        removeBtn.className = "btn btn-remove";
+        removeBtn.textContent = "Remove";
+        removeBtn.onclick = () => {
+          if (confirm(`Remove torrent "${t.name}"?`)) {
+            sendAction(t.infoHash, "remove");
+          }
+        };
+
+        actionsTd.appendChild(pauseBtn);
+        actionsTd.appendChild(resumeBtn);
+        actionsTd.appendChild(removeBtn);
+        tr.appendChild(actionsTd);
+
+        body.appendChild(tr);
+      });
+    }
+
+    async function sendAction(hash, action) {
+      await fetch(`/torrent/${encodeURIComponent(hash)}/${action}`, { method: "POST" });
+      setTimeout(fetchStats, 300);
+    }
+
+    fetchStats();
+    setInterval(fetchStats, 2000);
+  </script>
+</body>
+</html>
