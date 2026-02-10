@@ -115,11 +115,8 @@ export const getOrAddTorrent = (uri: string) =>
       {
         path: DOWNLOAD_DIR,
         destroyStoreOnDestroy: !KEEP_DOWNLOADED_FILES,
-        // IMPORTANT: do NOT fully deselect by default.
-        // If you later want strict on-demand downloading, you can re-add this
-        // but then you must select ranges in the stream endpoint.
-        // // @ts-ignore
-        // deselect: true,
+        // @ts-ignore
+        deselect: true,
       },
       (torrent) => {
         clearTimeout(timeout);
@@ -204,4 +201,51 @@ export const streamClosed = (hash: string, fileName: string) => {
   }, SEED_TIME);
 
   timeouts.set(hash, timeout);
+};
+
+export const removeTorrent = async (infoHash: string) => {
+  const torrent: any = streamClient.get(infoHash);
+  if (!torrent) return false;
+
+  // Prefer the client API (most compatible)
+  await new Promise<void>((resolve) => {
+    // destroyStore will delete files if the store supports it (per WebTorrent docs)
+    // @ts-ignore
+    streamClient.remove(infoHash, { destroyStore: !KEEP_DOWNLOADED_FILES }, () => resolve());
+  });
+
+  // Fallback: if it still exists and has destroy()
+  if (typeof torrent.destroy === "function") {
+    // @ts-ignore
+    torrent.destroy({ destroyStore: !KEEP_DOWNLOADED_FILES }, () => {});
+  }
+
+  return true;
+};
+
+// Add near openStreams/timeouts
+const openFileStreams = new Map<string, Map<string, number>>();
+
+// Call when a specific file stream opens
+export const fileStreamOpened = (hash: string, filePath: string) => {
+  const perTorrent = openFileStreams.get(hash) || new Map<string, number>();
+  const cur = perTorrent.get(filePath) || 0;
+  perTorrent.set(filePath, cur + 1);
+  openFileStreams.set(hash, perTorrent);
+};
+
+// Call when a specific file stream closes
+export const fileStreamClosed = (hash: string, filePath: string) => {
+  const perTorrent = openFileStreams.get(hash);
+  if (!perTorrent) return;
+  const cur = perTorrent.get(filePath) || 0;
+  if (cur <= 1) perTorrent.delete(filePath);
+  else perTorrent.set(filePath, cur - 1);
+  if (perTorrent.size === 0) openFileStreams.delete(hash);
+};
+
+// Snapshot which files are currently being streamed for this torrent
+export const getOpenFilePaths = (hash: string) => {
+  const perTorrent = openFileStreams.get(hash);
+  return perTorrent ? [...perTorrent.keys()] : [];
 };
