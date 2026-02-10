@@ -1,4 +1,4 @@
-ARG NODE_VERSION=20.11.1
+ARG NODE_VERSION=20
 ARG PNPM_VERSION=8.15.4
 ARG TS_VERSION=5.3.3
 
@@ -10,13 +10,18 @@ WORKDIR /usr/src/app
 RUN npm install -g typescript@${TS_VERSION}
 RUN --mount=type=cache,target=/root/.npm \
     npm install -g pnpm@${PNPM_VERSION}
-RUN --mount=type=bind,source=package.json,target=package.json \
-    --mount=type=bind,source=patches,target=patches \
+
+COPY package.json .
+COPY pnpm-lock.yaml .
+
+# Install dependencies and rebuild native modules
+RUN --mount=type=bind,source=patches,target=patches \
     --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install 
+    pnpm install --frozen-lockfile
+
+RUN npm rebuild node-datachannel
 
 COPY . .
-
 RUN pnpm run build
 RUN pnpm prune --prod
 
@@ -47,4 +52,4 @@ USER node
 EXPOSE 58827
 EXPOSE 58828
 
-CMD npm start
+CMD ["npm", "start"]

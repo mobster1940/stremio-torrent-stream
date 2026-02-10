@@ -35,35 +35,29 @@ interface ActiveTorrentInfo extends TorrentInfo {
   files: ActiveFileInfo[];
 }
 
-// Directory to store downloaded files (default OS temp directory)
 const DOWNLOAD_DIR =
   process.env.DOWNLOAD_DIR || path.join(os.tmpdir(), "torrent-stream-server");
 
-// Keep downloaded files after all streams are closed (default false)
 const KEEP_DOWNLOADED_FILES = process.env.KEEP_DOWNLOADED_FILES
   ? process.env.KEEP_DOWNLOADED_FILES === "true"
   : false;
 
 if (!KEEP_DOWNLOADED_FILES) fs.emptyDirSync(DOWNLOAD_DIR);
 
-// Maximum number of connections per torrent (default 50)
 const MAX_CONNS_PER_TORRENT = Number(process.env.MAX_CONNS_PER_TORRENT) || 50;
 
-// Max download speed (bytes/s) over all torrents (default 20MB/s)
 const DOWNLOAD_SPEED_LIMIT =
   Number(process.env.DOWNLOAD_SPEED_LIMIT) || 20 * 1024 * 1024;
 
-// Max upload speed (bytes/s) over all torrents (default 1MB/s)
 const UPLOAD_SPEED_LIMIT =
   Number(process.env.UPLOAD_SPEED_LIMIT) || 1 * 1024 * 1024;
 
-// Time (ms) to seed torrents after all streams are closed (default 1 minute)
 const SEED_TIME = Number(process.env.SEED_TIME) || 60 * 1000;
 
-// Timeout (ms) when adding torrents if no metadata is received (default 5 seconds)
 const TORRENT_TIMEOUT = Number(process.env.TORRENT_TIMEOUT) || 5 * 1000;
 
 const infoClient = new WebTorrent();
+
 const streamClient = new WebTorrent({
   // @ts-ignore
   downloadLimit: DOWNLOAD_SPEED_LIMIT,
@@ -93,7 +87,7 @@ export const getStats = () => ({
   openStreams: [...openStreams.values()].reduce((a, b) => a + b, 0),
   downloadSpeed: streamClient.downloadSpeed,
   uploadSpeed: streamClient.uploadSpeed,
-  activeTorrents: streamClient.torrents.map<ActiveTorrentInfo>((torrent) => ({
+  activeTorrents: streamClient.torrents.map((torrent) => ({
     name: torrent.name,
     infoHash: torrent.infoHash,
     size: torrent.length,
@@ -121,10 +115,13 @@ export const getOrAddTorrent = (uri: string) =>
       {
         path: DOWNLOAD_DIR,
         destroyStoreOnDestroy: !KEEP_DOWNLOADED_FILES,
-        // @ts-ignore
+        // IMPORTANT: do NOT fully deselect by default.
+        // If you later want strict on-demand downloading, you can re-add this
+        // but then you must select ranges in the stream endpoint.
+        // // @ts-ignore
+        // deselect: true,
       },
       (torrent) => {
-        torrent.select(0, torrent.pieces.length - 1, 1);
         clearTimeout(timeout);
         resolve(torrent);
       }
@@ -136,8 +133,8 @@ export const getOrAddTorrent = (uri: string) =>
     }, TORRENT_TIMEOUT);
   });
 
-export const getFile = (torrent: Torrent, path: string) =>
-  torrent.files.find((file) => file.path === path);
+export const getFile = (torrent: Torrent, pathStr: string) =>
+  torrent.files.find((file) => file.path === pathStr);
 
 export const getTorrentInfo = async (uri: string) => {
   const getInfo = (torrent: Torrent): TorrentInfo => ({
@@ -176,12 +173,10 @@ const openStreams = new Map<string, number>();
 
 export const streamOpened = (hash: string, fileName: string) => {
   console.log(`Stream opened: ${fileName}`);
-
   const count = openStreams.get(hash) || 0;
   openStreams.set(hash, count + 1);
 
   const timeout = timeouts.get(hash);
-
   if (timeout) {
     clearTimeout(timeout);
     timeouts.delete(hash);
@@ -190,12 +185,10 @@ export const streamOpened = (hash: string, fileName: string) => {
 
 export const streamClosed = (hash: string, fileName: string) => {
   console.log(`Stream closed: ${fileName}`);
-
   const count = openStreams.get(hash) || 1;
   openStreams.set(hash, count - 1);
 
   if (count > 1) return;
-
   openStreams.delete(hash);
 
   let timeout = timeouts.get(hash);
@@ -211,40 +204,4 @@ export const streamClosed = (hash: string, fileName: string) => {
   }, SEED_TIME);
 
   timeouts.set(hash, timeout);
-};
-
-export const findTorrent = (infoHash: string): Torrent | undefined => {
-  return streamClient.torrents.find((t) => t.infoHash === infoHash);
-};
-
-export const pauseTorrent = (infoHash: string): boolean => {
-  const torrent = findTorrent(infoHash);
-  if (!torrent) return false;
-  // Deselect all pieces to effectively pause
-  torrent.deselect(0, torrent.pieces.length - 1, 0);
-  return true;
-};
-
-export const resumeTorrent = (infoHash: string): boolean => {
-  const torrent = findTorrent(infoHash);
-  if (!torrent) return false;
-  // Re‑select all pieces
-  torrent.select(0, torrent.pieces.length - 1, 1);
-  return true;
-};
-
-export const removeTorrent = async (infoHash: string): Promise<boolean> => {
-  const torrent = findTorrent(infoHash);
-  if (!torrent) return false;
-  return await new Promise<boolean>((resolve) => {
-    streamClient.remove(torrent.infoHash, { destroyStore: !KEEP_DOWNLOADED_FILES }, (err) => {
-      if (err) {
-        console.error("Error removing torrent", err);
-        resolve(false);
-      } else {
-        console.log("Removed torrent", torrent.name);
-        resolve(true);
-      }
-    });
-  });
 };

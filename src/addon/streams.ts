@@ -1,11 +1,13 @@
 import { Request } from "express";
 import Stremio from "stremio-addon-sdk";
+
 import {
   TorrentCategory,
   TorrentSearchResult,
   TorrentSource,
   searchTorrents,
 } from "../torrent/search.js";
+
 import { getTorrentInfo } from "../torrent/webtorrent.js";
 import { getReadableSize, isSubtitleFile, isVideoFile } from "../utils/file.js";
 import { getTitles } from "../utils/imdb.js";
@@ -20,16 +22,21 @@ interface HandlerArgs {
     enableJackett: string;
     jackettUrl: string;
     jackettKey: string;
+
     enableNcore: string;
     nCoreUser: string;
     nCorePassword: string;
+
     enableInsane: string;
     insaneUser: string;
     insanePassword: string;
+
     enableItorrent: string;
     enableYts: string;
     enableEztv: string;
+
     searchByTitle: string;
+
     disableHdr: string;
     disableHevc: string;
     disable4k: string;
@@ -41,8 +48,8 @@ interface HandlerArgs {
 
 export const streamHandler = async ({ type, id, config, req }: HandlerArgs) => {
   let torrents: TorrentSearchResult[] = [];
-
   const categories: TorrentCategory[] = [];
+
   if (type === "movie") categories.push("movie");
   if (type === "series") categories.push("show");
 
@@ -55,8 +62,8 @@ export const streamHandler = async ({ type, id, config, req }: HandlerArgs) => {
   if (config.enableEztv === "on") sources.push("eztv");
 
   const [imdbId, season, episode] = id.split(":");
-
   const queries = [imdbId];
+
   if (config.searchByTitle === "on") queries.push(...(await getTitles(imdbId)));
 
   torrents = (
@@ -65,18 +72,9 @@ export const streamHandler = async ({ type, id, config, req }: HandlerArgs) => {
         searchTorrents(query, {
           categories,
           sources,
-          jackett: {
-            url: config.jackettUrl,
-            apiKey: config.jackettKey,
-          },
-          ncore: {
-            user: config.nCoreUser,
-            password: config.nCorePassword,
-          },
-          insane: {
-            user: config.insaneUser,
-            password: config.insanePassword,
-          },
+          jackett: { url: config.jackettUrl, apiKey: config.jackettKey },
+          ncore: { user: config.nCoreUser, password: config.nCorePassword },
+          insane: { user: config.insaneUser, password: config.insanePassword },
         })
       )
     )
@@ -88,8 +86,7 @@ export const streamHandler = async ({ type, id, config, req }: HandlerArgs) => {
     if (!torrent.seeds) return false;
     if (torrent.category?.includes("DVD")) return false;
     if (!isAllowedFormat(config, torrent.name)) return false;
-    if (!isAllowedQuality(config, guessQuality(torrent.name).quality))
-      return false;
+    if (!isAllowedQuality(config, guessQuality(torrent.name).quality)) return false;
 
     if (
       season &&
@@ -103,9 +100,7 @@ export const streamHandler = async ({ type, id, config, req }: HandlerArgs) => {
 
   let streams = (
     await Promise.all(
-      torrents.map((torrent) =>
-        getStreamsFromTorrent(req, torrent, season, episode)
-      )
+      torrents.map((torrent) => getStreamsFromTorrent(req, torrent, season, episode))
     )
   ).flat();
 
@@ -115,7 +110,16 @@ export const streamHandler = async ({ type, id, config, req }: HandlerArgs) => {
     return true;
   });
 
-  streams.sort((a, b) => b.score - a.score);
+  streams.sort((a, b) => {
+    // 1) Quality (higher score first)
+    if (b.score !== a.score) return b.score - a.score;
+
+    // 2) Size (bigger file first)
+    if (b.size !== a.size) return b.size - a.size;
+
+    // 3) Seeders (more seeders first)
+    return (b.seeds || 0) - (a.seeds || 0);
+  });
 
   return { streams: streams.map((stream) => stream.stream) };
 };
@@ -124,7 +128,6 @@ const dedupeTorrents = (torrents: TorrentSearchResult[]) => {
   const map = new Map(
     torrents.map((torrent) => [`${torrent.tracker}:${torrent.name}`, torrent])
   );
-
   return [...map.values()];
 };
 
@@ -140,6 +143,8 @@ export const getStreamsFromTorrent = async (
     fileName: string;
     quality: string;
     score: number;
+    size: number;
+    seeds: number;
   }[]
 > => {
   const uri = torrent.torrent || torrent.magnet;
@@ -149,56 +154,40 @@ export const getStreamsFromTorrent = async (
   if (!torrentInfo) return [];
 
   let videos = torrentInfo.files.filter((file) => isVideoFile(file.name));
-  
+
   if (season && episode) {
     videos = videos.filter((file) =>
       isFileNameMatch(file.name, Number(season), Number(episode))
     );
+
+    const videosSize = videos.reduce((acc, file) => acc + file.size, 0);
+    videos = videos.filter((file) => file.size > videosSize / (videos.length + 1));
   }
 
-  const videosSize = videos.reduce((acc, file) => acc + file.size, 0);
-
-  videos = videos.filter(
-    (file) => file.size > videosSize / (videos.length + 1)
-  );
-
   const subs = torrentInfo.files.filter((file) => isSubtitleFile(file.name));
-
   const torrentQuality = guessQuality(torrent.name);
   const language = guessLanguage(torrent.name, torrent.category);
 
   // @ts-ignore
   return videos.map((file) => {
     const fileQuality = guessQuality(file.name);
-
     const { quality, score } =
       fileQuality.score > torrentQuality.score ? fileQuality : torrentQuality;
 
     const description = [
       ...(season && episode ? [torrent.name, file.name] : [torrent.name]),
-      [
-        `💾 ${getReadableSize(file.size)}`,
-        `⬆️ ${torrent.seeds}`,
-        `⬇️ ${torrent.peers}`,
-      ].join(" "),
+      `💾 ${getReadableSize(file.size)}`,
+      `⬆️ ${torrent.seeds}`,
+      `⬇️ ${torrent.peers}`,
       [`🔊 ${language}`, `⚙️ ${torrent.tracker}`].join(" "),
     ].join("\n");
 
     const streamEndpoint = `${req.protocol}://${req.get("host")}/stream`;
-
-    const url = [
-      streamEndpoint,
-      encodeURIComponent(uri),
-      encodeURIComponent(file.path),
-    ].join("/");
+    const url = [streamEndpoint, encodeURIComponent(uri), encodeURIComponent(file.path)].join("/");
 
     const subtitles = subs.map((sub, index) => ({
       id: index.toString(),
-      url: [
-        streamEndpoint,
-        encodeURIComponent(uri),
-        encodeURIComponent(sub.path),
-      ].join("/"),
+      url: [streamEndpoint, encodeURIComponent(uri), encodeURIComponent(sub.path)].join("/"),
       lang: sub.name,
     }));
 
@@ -216,32 +205,28 @@ export const getStreamsFromTorrent = async (
       fileName: file.name,
       quality,
       score,
+      size: file.size,
+      seeds: torrent.seeds || 0,
     };
   });
 };
 
 const isAllowedQuality = (config: HandlerArgs["config"], quality: string) => {
   if (config?.disable4k === "on" && quality.includes("4K")) return false;
-
   if (config?.disableCam === "on" && quality.includes("CAM")) return false;
-
   if (
     config?.disableHdr === "on" &&
     (quality.includes("HDR") || quality.includes("Dolby Vision"))
   )
     return false;
-
   if (config?.disable3d === "on" && quality.includes("3D")) return false;
-
   return true;
 };
 
 const isAllowedFormat = (config: HandlerArgs["config"], name: string) => {
   if (config?.disableHevc === "on") {
     const str = name.replace(/\W/g, "").toLowerCase();
-    if (str.includes("x265") || str.includes("h265") || str.includes("hevc"))
-      return false;
+    if (str.includes("x265") || str.includes("h265") || str.includes("hevc")) return false;
   }
-
   return true;
 };
