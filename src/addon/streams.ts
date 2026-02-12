@@ -176,9 +176,7 @@ export const getStreamsFromTorrent = async (
 
     const description = [
       ...(season && episode ? [torrent.name, file.name] : [torrent.name]),
-      `💾 ${getReadableSize(file.size)}`,
-      `⬆️ ${torrent.seeds}`,
-      `⬇️ ${torrent.peers}`,
+      `💾 ${getReadableSize(file.size)} ⬆️ ${torrent.seeds} ⬇️ ${torrent.peers}`,
       [`🔊 ${language}`, `⚙️ ${torrent.tracker}`].join(" "),
     ].join("\n");
 
