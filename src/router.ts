@@ -65,7 +65,6 @@ router.get("/torrent/:torrentUri", async (req, res) => {
   res.json(torrent);
 });
 
-/** Stream endpoint (Range + piece selection + safe cleanup) */
 router.get("/stream/:torrentUri/:filePath", async (req, res) => {
   const { torrentUri, filePath } = req.params;
 
@@ -79,7 +78,24 @@ router.get("/stream/:torrentUri/:filePath", async (req, res) => {
   const range = req.headers.range;
 
   const NO_DATA_TIMEOUT_MS = 15000;
+  const AHEAD_BYTES = 60 * 1024 * 1024; // Pre-fetch 60MB ahead (approx 30s-1m of 4K/1080p)
   const hash = torrent.infoHash;
+
+  // Helper: Convert file bytes to torrent piece indices and prioritize them
+  const prioritize = (startByte: number, endByte: number) => {
+    // @ts-ignore
+    if (!torrent.pieceLength || !file.offset) return;
+    
+    // @ts-ignore
+    const fileOffset = file.offset; // Where this file starts in the full torrent
+    const startP = Math.floor((fileOffset + startByte) / torrent.pieceLength);
+    const endP = Math.floor((fileOffset + endByte) / torrent.pieceLength);
+
+    // Critical = High priority (download immediately)
+    // We critical the immediate stream + the lookahead buffer
+    // @ts-ignore
+    torrent.critical(startP, endP);
+  };
 
   const pipeWithCleanup = (readable: any) => {
     let noDataTimeout: NodeJS.Timeout | undefined = setTimeout(() => {
@@ -89,9 +105,7 @@ router.get("/stream/:torrentUri/:filePath", async (req, res) => {
     const cleanup = () => {
       if (noDataTimeout) clearTimeout(noDataTimeout);
       noDataTimeout = undefined;
-
       readable.destroy();
-
       fileStreamClosed(hash, file.path);
       streamClosed(hash, file.name);
     };
@@ -114,27 +128,26 @@ router.get("/stream/:torrentUri/:filePath", async (req, res) => {
     readable.pipe(res);
   };
 
-  // Only rescope selections when we won't break other open streams
+  // Manage selections (ensure we don't download the whole pack)
   const openPaths = getOpenFilePaths(hash);
   const safeToRescope =
     openPaths.length === 0 || (openPaths.length === 1 && openPaths[0] === file.path);
 
   if (safeToRescope) {
     try {
-      // Ensure only this file is selected (pack-friendly)
       torrent.files.forEach((f: any) => {
         if (typeof f.deselect === "function") f.deselect();
       });
+      // Select the whole file to keep it "interested"
       if (typeof (file as any).select === "function") (file as any).select();
     } catch {}
   } else {
-    // Even if we can't rescope globally, at least ensure the requested file is selected
     try {
       if (typeof (file as any).select === "function") (file as any).select();
     } catch {}
   }
 
-  // No Range -> full file
+  // --- No Range (Serve Full File) ---
   if (!range) {
     res.writeHead(200, {
       "Content-Length": file.length,
@@ -144,6 +157,9 @@ router.get("/stream/:torrentUri/:filePath", async (req, res) => {
     });
 
     try {
+      // Prioritize the first 60MB for fast start
+      prioritize(0, Math.min(file.length - 1, AHEAD_BYTES));
+      
       const readable = file.createReadStream();
       pipeWithCleanup(readable);
     } catch {
@@ -152,7 +168,7 @@ router.get("/stream/:torrentUri/:filePath", async (req, res) => {
     return;
   }
 
-  // Range -> partial content
+  // --- Range Request ---
   const m = /^bytes=(\d+)-(\d*)$/.exec(range);
   if (!m) {
     res.writeHead(416, { "Content-Range": `bytes */${file.length}` });
@@ -178,8 +194,16 @@ router.get("/stream/:torrentUri/:filePath", async (req, res) => {
   });
 
   try {
-    // This is the key: WebTorrent will prioritize pieces needed for this byte range.
-    // (Don’t rely on file.select(start,end) – it’s not the right API.)
+    // 1. Prioritize the REQUESTED range (immediate need)
+    prioritize(start, safeEnd);
+
+    // 2. Prioritize the AHEAD buffer (next 60MB) so it's ready when playback gets there
+    const aheadStart = safeEnd + 1;
+    const aheadEnd = Math.min(file.length - 1, aheadStart + AHEAD_BYTES);
+    if (aheadStart < aheadEnd) {
+      prioritize(aheadStart, aheadEnd);
+    }
+
     const readable = file.createReadStream({ start, end: safeEnd });
     pipeWithCleanup(readable);
   } catch {
@@ -267,6 +291,14 @@ const STATS_HTML =
   '' +
   '    var filesHint = ((t.files || []).length > 6) ? "<div class=\\"muted\\">Showing first 6 files</div>" : "";' +
   '' +
+  '    var selText = "-";' +
+  '    if (t.selectedFiles && t.selectedFiles.length) {' +
+  '      var sf = t.selectedFiles[0];' +
+  '      selText = (sf.name || sf.path || "Selected") +' +
+  '        " • " + Math.round((sf.progress || 0) * 100) + "%"' +
+  '        + " • " + fmtBytes(sf.downloaded || 0) + " / " + fmtBytes(sf.size || 0);' +
+  '    }' +
+  '' +
   '    return "" +' +
   '      "<div class=\\"card\\">" +' +
   '        "<div class=\\"row\\">" +' +
@@ -274,7 +306,8 @@ const STATS_HTML =
   '            "<div><strong>" + (t.name || "") + "</strong></div>" +' +
   '            "<div class=\\"muted mono\\">" + (t.infoHash || "") + "</div>" +' +
   '          "</div>" +' +
-  '          "<div><div class=\\"muted\\">Progress</div><div>" + Math.round((t.progress || 0) * 100) + "%</div></div>" +' +
+  '          "<div><div class=\\"muted\\">Progress (torrent)</div><div>" + Math.round((t.progress || 0) * 100) + "%</div></div>" +' +
+  '          "<div style=\\"min-width:260px\\"><div class=\\"muted\\">Progress (selected file)</div><div class=\\"mono\\" style=\\"white-space:nowrap; overflow:hidden; text-overflow:ellipsis\\">" + selText + "</div></div>" +' +
   '          "<div><div class=\\"muted\\">Downloaded</div><div>" + fmtBytes(t.downloaded || 0) + "</div></div>" +' +
   '          "<div><div class=\\"muted\\">Speed</div><div>↓ " + fmtBytes(t.downloadSpeed || 0) + "/s • ↑ " + fmtBytes(t.uploadSpeed || 0) + "/s</div></div>" +' +
   '          "<div><div class=\\"muted\\">Peers</div><div>" + (t.peers == null ? "-" : t.peers) + "</div></div>" +' +
