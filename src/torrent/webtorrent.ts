@@ -63,6 +63,8 @@ const streamClient = new WebTorrent({
   downloadLimit: DOWNLOAD_SPEED_LIMIT,
   uploadLimit: UPLOAD_SPEED_LIMIT,
   maxConns: MAX_CONNS_PER_TORRENT,
+  // @ts-ignore
+  verify: false,
 });
 
 streamClient.on("torrent", (torrent) => {
@@ -82,41 +84,38 @@ infoClient.on("error", () => {});
 
 const launchTime = Date.now();
 
-export const getStats = () => ({
-  uptime: getReadableDuration(Date.now() - launchTime),
-  openStreams: [...openStreams.values()].reduce((a, b) => a + b, 0),
-  downloadSpeed: streamClient.downloadSpeed,
-  uploadSpeed: streamClient.uploadSpeed,
-  activeTorrents: streamClient.torrents.map((torrent) => ({
-    selectedFilePaths: getOpenFilePaths(torrent.infoHash),
-    selectedFiles: torrent.files
-    .filter((f) => getOpenFilePaths(torrent.infoHash).includes(f.path))
-    .map((f) => ({
-      name: f.name,
-      path: f.path,
-      size: f.length,
-      progress: f.progress,
-      downloaded: f.downloaded,
+export const getStats = () => {
+  const streamCount = openStreams.size > 0 
+    ? [...openStreams.values()].reduce((a, b) => a + b, 0) 
+    : 0;
+
+  return {
+    uptime: getReadableDuration(Date.now() - launchTime),
+    openStreams: streamCount,
+    downloadSpeed: streamClient.downloadSpeed || 0,
+    uploadSpeed: streamClient.uploadSpeed || 0,
+    activeTorrents: streamClient.torrents.map((torrent) => ({
+      name: torrent.name || "Unknown",
+      infoHash: torrent.infoHash || "",
+      size: torrent.length || 0,
+      progress: torrent.progress || 0,
+      downloaded: torrent.downloaded || 0,
+      uploaded: torrent.uploaded || 0,
+      downloadSpeed: torrent.downloadSpeed || 0,
+      uploadSpeed: torrent.uploadSpeed || 0,
+      peers: torrent.numPeers || 0,
+      openStreams: openStreams.get(torrent.infoHash) || 0,
+      files: torrent.files.map((file) => ({
+        name: file.name || "",
+        path: file.path || "",
+        size: file.length || 0,
+        progress: file.progress || 0,
+        downloaded: file.downloaded || 0,
+      })),
     })),
-    name: torrent.name,
-    infoHash: torrent.infoHash,
-    size: torrent.length,
-    progress: torrent.progress,
-    downloaded: torrent.downloaded,
-    uploaded: torrent.uploaded,
-    downloadSpeed: torrent.downloadSpeed,
-    uploadSpeed: torrent.uploadSpeed,
-    peers: torrent.numPeers,
-    openStreams: openStreams.get(torrent.infoHash) || 0,
-    files: torrent.files.map((file) => ({
-      name: file.name,
-      path: file.path,
-      size: file.length,
-      progress: file.progress,
-      downloaded: file.downloaded,
-    })),
-  })),
-});
+  };
+};
+
 
 export const getOrAddTorrent = (uri: string) =>
   new Promise<Torrent | undefined>((resolve) => {
@@ -239,7 +238,8 @@ const openFileStreams = new Map<string, Map<string, number>>();
 // Call when a specific file stream opens
 export const fileStreamOpened = (hash: string, filePath: string) => {
   const perTorrent = openFileStreams.get(hash) || new Map<string, number>();
-  perTorrent.set(filePath, (perTorrent.get(filePath) || 0) + 1);
+  const cur = perTorrent.get(filePath) || 0;
+  perTorrent.set(filePath, cur + 1);
   openFileStreams.set(hash, perTorrent);
 };
 
@@ -247,11 +247,9 @@ export const fileStreamOpened = (hash: string, filePath: string) => {
 export const fileStreamClosed = (hash: string, filePath: string) => {
   const perTorrent = openFileStreams.get(hash);
   if (!perTorrent) return;
-
   const cur = perTorrent.get(filePath) || 0;
   if (cur <= 1) perTorrent.delete(filePath);
   else perTorrent.set(filePath, cur - 1);
-
   if (perTorrent.size === 0) openFileStreams.delete(hash);
 };
 

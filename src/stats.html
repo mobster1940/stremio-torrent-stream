@@ -1,0 +1,380 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Torrent Stats</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        font-family: system-ui, Arial, sans-serif;
+        margin: 0;
+        padding: 20px;
+        background: #0b0f14;
+        color: #e8eef6;
+      }
+      .row {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .card {
+        background: #111824;
+        border: 1px solid #1d2a3a;
+        border-radius: 12px;
+        padding: 14px;
+        margin: 12px 0;
+      }
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 16px;
+      }
+      .stat-item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .controls {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 12px;
+      }
+      @media (max-width: 768px) {
+        .stats-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .torrent-details {
+          flex-direction: column !important;
+          align-items: flex-start !important;
+        }
+        .torrent-stats {
+          width: 100%;
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 8px;
+        }
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        overflow-x: auto;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 8px;
+        border-bottom: 1px solid #1d2a3a;
+        vertical-align: top;
+      }
+      th {
+        color: #a9b7c6;
+        font-weight: 600;
+      }
+      .muted {
+        color: #a9b7c6;
+        font-size: 0.9em;
+      }
+      button {
+        background: #1f6feb;
+        color: white;
+        border: 0;
+        padding: 8px 12px;
+        border-radius: 10px;
+        cursor: pointer;
+        font-size: 14px;
+      }
+      button.danger {
+        background: #d73a49;
+      }
+      button.secondary {
+        background: #2d333b;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      input {
+        padding: 8px 10px;
+        border-radius: 10px;
+        border: 1px solid #1d2a3a;
+        background: #0b0f14;
+        color: #e8eef6;
+        width: 100%;
+      }
+      input[type="number"] {
+        width: 80px;
+      }
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+      }
+      summary {
+        cursor: pointer;
+        padding: 8px 0;
+        user-select: none;
+      }
+      summary:hover {
+        color: #1f6feb;
+      }
+      .torrent-details {
+        display: flex;
+        gap: 16px;
+        align-items: flex-start;
+        flex-wrap: wrap;
+      }
+      .torrent-info {
+        flex: 1;
+        min-width: 200px;
+      }
+      .torrent-stats {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      .progress-bar {
+        height: 6px;
+        background: #1d2a3a;
+        border-radius: 3px;
+        overflow: hidden;
+        margin-top: 4px;
+      }
+      .progress-fill {
+        height: 100%;
+        background: #1f6feb;
+        transition: width 0.3s ease;
+      }
+      .selected-file {
+        background: #1a2332;
+        border-left: 3px solid #1f6feb;
+        padding-left: 8px !important;
+      }
+      h1 {
+        margin: 0 0 20px 0;
+      }
+      @media (max-width: 480px) {
+        body {
+          padding: 10px;
+        }
+        .card {
+          padding: 10px;
+        }
+        h1 {
+          font-size: 1.5em;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Torrent Stats</h1>
+    <div class="card">
+      <div class="stats-grid">
+        <div class="stat-item">
+          <div class="muted">Uptime</div>
+          <div id="uptime">-</div>
+        </div>
+        <div class="stat-item">
+          <div class="muted">Open Streams</div>
+          <div id="openStreams">-</div>
+        </div>
+        <div class="stat-item">
+          <div class="muted">Download</div>
+          <div id="dl">-</div>
+        </div>
+        <div class="stat-item">
+          <div class="muted">Upload</div>
+          <div id="ul">-</div>
+        </div>
+      </div>
+      <div class="controls">
+        <button class="secondary" id="refreshBtn">Refresh</button>
+        <label class="muted" style="display: flex; align-items: center; gap: 8px;">
+          Auto-refresh (ms):
+          <input id="autoMs" type="number" value="2000" min="500" step="500" />
+        </label>
+      </div>
+    </div>
+    <div class="card">
+      <input id="filter" placeholder="Filter torrents by name or hash..." />
+    </div>
+    <div id="torrents"></div>
+    <script>
+      document.addEventListener('DOMContentLoaded', function() {
+        function $(id) {
+          return document.getElementById(id);
+        }
+
+        function fmtBytes(n) {
+          if (!isFinite(n) || n == null) return "-";
+          var u = ["B", "KB", "MB", "GB", "TB"];
+          var i = 0;
+          while (n >= 1024 && i < u.length - 1) {
+            n = n / 1024;
+            i++;
+          }
+          return (i === 0 ? n.toFixed(0) : n.toFixed(2)) + " " + u[i];
+        }
+
+        function api(method, url) {
+          return fetch(url, { method: method }).then(function (res) {
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return res.json();
+          });
+        }
+
+        var selectedFiles = {};
+
+        function torrentCard(t) {
+          // Show ALL files instead of just 10
+          var fileRows = (t.files || []).map(function (f) {
+            var progress = Math.round((f.progress || 0) * 100);
+            var isSelected = selectedFiles[t.infoHash] && selectedFiles[t.infoHash][f.path];
+            var rowClass = isSelected ? "selected-file" : "";
+            return (
+              "<tr class='" + rowClass + "'>" +
+              "<td>" + 
+                (isSelected ? "<strong>▶ " + f.name + "</strong>" : f.name) +
+                "<div class='progress-bar'><div class='progress-fill' style='width:" + progress + "%'></div></div>" +
+              "</td>" +
+              "<td class='mono'>" + fmtBytes(f.size || 0) + "</td>" +
+              "<td>" + progress + "%</td>" +
+              "</tr>"
+            );
+          }).join("");
+
+          var hash = (t.infoHash || "").replace(/'/g, "\\'");
+
+          return (
+            "<div class='card'>" +
+            "<div class='torrent-details'>" +
+            "<div class='torrent-info'>" +
+            "<div><strong>" + (t.name || "Unknown") + "</strong></div>" +
+            "<div class='muted mono'>" + (t.infoHash || "") + "</div>" +
+            "<div class='progress-bar' style='margin-top: 8px;'><div class='progress-fill' style='width:" + Math.round((t.progress || 0) * 100) + "%'></div></div>" +
+            "</div>" +
+            "<div class='torrent-stats'>" +
+            "<div><div class='muted'>Progress</div><div>" + Math.round((t.progress || 0) * 100) + "%</div></div>" +
+            "<div><div class='muted'>Downloaded</div><div>" + fmtBytes(t.downloaded || 0) + "</div></div>" +
+            "<div><div class='muted'>Speed</div><div>" + fmtBytes(t.downloadSpeed || 0) + "/s ↓</div></div>" +
+            "<div><div class='muted'>Upload</div><div>" + fmtBytes(t.uploadSpeed || 0) + "/s ↑</div></div>" +
+            "<div><div class='muted'>Peers</div><div>" + (t.peers == null ? "-" : t.peers) + "</div></div>" +
+            "<div><div class='muted'>Streams</div><div>" + (t.openStreams == null ? 0 : t.openStreams) + "</div></div>" +
+            "</div>" +
+            "<button class='danger' onclick='window.deleteTorrent(\'" + hash + "\')'>Delete</button>" +
+            "</div>" +
+            "<details data-hash='" + (t.infoHash || "") + "' style='margin-top:10px'>" +
+            "<summary class='muted'>Files (" + (t.files || []).length + ")</summary>" +
+            "<div style='overflow-x: auto;'>" +
+            "<table><thead><tr><th>Name</th><th>Size</th><th>Progress</th></tr></thead>" +
+            "<tbody>" + (fileRows || "<tr><td colspan='3' class='muted'>No files</td></tr>") + "</tbody></table>" +
+            "</div>" +
+            "</details>" +
+            "</div>"
+          );
+        }
+
+        function getOpenDetails() {
+          var nodes = document.querySelectorAll("details[data-hash][open]");
+          var set = {};
+          for (var i = 0; i < nodes.length; i++) {
+            var h = nodes[i].getAttribute("data-hash");
+            if (h) set[h] = true;
+          }
+          return set;
+        }
+
+        function restoreOpenDetails(openSet) {
+          for (var hash in openSet) {
+            if (!openSet.hasOwnProperty(hash)) continue;
+            var d = document.querySelector("details[data-hash='" + hash + "']");
+            if (d) d.open = true;
+          }
+        }
+
+        function refresh() {
+          console.log('Refreshing stats...');
+          var openSet = getOpenDetails();
+          return api("GET", "/api/stats")
+            .then(function (data) {
+              console.log('Got stats:', data);
+
+              $("uptime").textContent = data.uptime || "-";
+              $("openStreams").textContent = data.openStreams != null ? data.openStreams : "-";
+              $("dl").textContent = fmtBytes(data.downloadSpeed || 0) + "/s";
+              $("ul").textContent = fmtBytes(data.uploadSpeed || 0) + "/s";
+
+              selectedFiles = {};
+              (data.activeTorrents || []).forEach(function(t) {
+                if (t.openStreams > 0) {
+                  if (!selectedFiles[t.infoHash]) selectedFiles[t.infoHash] = {};
+                  var sorted = (t.files || []).slice().sort(function(a,b) { return (b.progress || 0) - (a.progress || 0); });
+                  if (sorted[0] && sorted[0].progress > 0) {
+                    selectedFiles[t.infoHash][sorted[0].path] = true;
+                  }
+                }
+              });
+
+              var q = $("filter").value.toLowerCase().trim();
+              var list = (data.activeTorrents || [])
+                .filter(function (t) {
+                  if (!q) return true;
+                  var n = (t.name || "").toLowerCase();
+                  var h = (t.infoHash || "").toLowerCase();
+                  return n.indexOf(q) !== -1 || h.indexOf(q) !== -1;
+                })
+                .sort(function (a, b) {
+                  return (b.downloadSpeed || 0) - (a.downloadSpeed || 0);
+                });
+
+              $("torrents").innerHTML = list.length
+                ? list.map(torrentCard).join("")
+                : "<div class='card'><div class='muted'>No active torrents</div></div>";
+
+              restoreOpenDetails(openSet);
+            })
+            .catch(function (err) {
+              console.error('Stats error:', err);
+              $("torrents").innerHTML = "<div class='card'><div class='muted'>Error: " + (err.message || err) + "</div></div>";
+            });
+        }
+
+        window.deleteTorrent = function (hash) {
+          if (!hash) return;
+          if (!confirm("Delete this torrent?")) return;
+          api("DELETE", "/api/torrents/" + encodeURIComponent(hash)).then(function () {
+            refresh();
+          }).catch(function(err) {
+            console.error('Delete error:', err);
+            alert('Failed to delete torrent');
+          });
+        };
+
+        $("refreshBtn").addEventListener("click", function () {
+          refresh();
+        });
+
+        $("filter").addEventListener("input", function () {
+          refresh();
+        });
+
+        var timer = null;
+        function setAuto() {
+          if (timer) clearInterval(timer);
+          var ms = Math.max(500, Number($("autoMs").value) || 2000);
+          timer = setInterval(function () {
+            refresh();
+          }, ms);
+        }
+
+        $("autoMs").addEventListener("change", setAuto);
+
+        setAuto();
+        refresh();
+      });
+    </script>
+  </body>
+</html>

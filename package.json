@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "postbuild": "cp src/stats.html dist/",
     "start": "node --no-warnings dist/index.js",
     "dev": "esrun --node-no-warnings --watch src/index.ts"
   },
