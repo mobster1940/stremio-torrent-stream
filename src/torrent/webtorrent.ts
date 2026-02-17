@@ -65,6 +65,7 @@ const streamClient = new WebTorrent({
   maxConns: MAX_CONNS_PER_TORRENT,
   // @ts-ignore
   verify: false,
+  storeCacheSlots: 20
 });
 
 streamClient.on("torrent", (torrent) => {
