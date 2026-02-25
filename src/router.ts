@@ -42,8 +42,13 @@ router.get("/api/stats", (req, res) => {
 
 /** Delete torrent */
 router.delete("/api/torrents/:infoHash", async (req, res) => {
-  const ok = await removeTorrent(req.params.infoHash);
-  res.status(ok ? 200 : 404).json({ ok });
+  try {
+    const ok = await removeTorrent(req.params.infoHash);
+    res.status(ok ? 200 : 404).json({ ok });
+  } catch (err: any) {
+    console.error("removeTorrent failed:", err);
+    res.status(500).json({ ok: false, error: err?.message || String(err) });
+  }
 });
 
 /** Existing endpoints */
