@@ -313,7 +313,7 @@
           "<div><div class='muted'>Peers</div><div>" + (t.peers == null ? "-" : t.peers) + "</div></div>" +
           "<div><div class='muted'>Streams</div><div>" + (t.openStreams == null ? 0 : t.openStreams) + "</div></div>" +
           "</div>" +
-          "<button class='danger' onclick='window.deleteTorrent(\'" + hash + "\')'>Delete</button>" +
+          "<button class='danger' onclick=\"window.deleteTorrent('" + hash + "')\">Delete</button>" +
           "</div>" +
           "<details data-hash='" + (t.infoHash || "") + "' style='margin-top:10px'>" +
           "<summary class='muted'>Files (" + (t.files || []).length + ")</summary>" +
