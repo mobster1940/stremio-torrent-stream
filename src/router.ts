@@ -15,7 +15,7 @@ import {
   fileStreamClosed,
   getOpenFilePaths,
 } from "./torrent/webtorrent.js";
-import { getStreamingMimeType } from "./utils/file.js";
+import { getStreamingMimeType, isSubtitleFile } from "./utils/file.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -162,10 +162,18 @@ router.get("/stream/:torrentUri/:filePath", async (req, res) => {
         if (typeof f.deselect === "function") f.deselect();
       });
       if (typeof (file as any).select === "function") (file as any).select();
+      // Keep subtitle files selected so they download alongside the video,
+      // making them available without waiting for full torrent completion.
+      torrent.files.forEach((f: any) => {
+        if (isSubtitleFile(f.name) && typeof f.select === "function") f.select();
+      });
     } catch {}
   } else {
     try {
       if (typeof (file as any).select === "function") (file as any).select();
+      torrent.files.forEach((f: any) => {
+        if (isSubtitleFile(f.name) && typeof f.select === "function") f.select();
+      });
     } catch {}
   }
 

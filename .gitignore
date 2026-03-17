@@ -143,4 +143,14 @@ dist
 # SvelteKit build / generate output
 .svelte-kit
 
-# End of https://www.toptal.com/developers/gitignore/api/node,dotenv
+# End of https://www.toptal.com/developers/gitignore/api/node,dotenv.dual-graph/
+.dual-graph/
+
+# PNPM Store
+.pnpm-store
+
+# Claude and devcontainer
+.claude
+CLAUDE.md
+.devcontainer/
+

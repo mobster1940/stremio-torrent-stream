@@ -130,6 +130,21 @@ export const getOrAddTorrent = (uri: string) =>
       },
       (torrent) => {
         clearTimeout(timeout);
+
+        // When the torrent completes, WebTorrent resets internal piece priorities
+        // which can stall active streams for ~10 seconds. Re-select open files to
+        // restore priority and prevent the buffering pause.
+        torrent.on("done", () => {
+          const openPaths = getOpenFilePaths(torrent.infoHash);
+          if (openPaths.length > 0) {
+            torrent.files.forEach((f: any) => {
+              try {
+                if (openPaths.includes(f.path)) f.select?.();
+              } catch {}
+            });
+          }
+        });
+
         resolve(torrent);
       }
     );
