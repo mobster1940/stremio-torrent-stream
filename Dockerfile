@@ -28,6 +28,8 @@ RUN pnpm prune --prod
 # Runner stage
 FROM node:${NODE_VERSION}-slim as final
 
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
 COPY package.json .
 COPY --from=build /usr/src/app/node_modules ./node_modules
 COPY --from=build /usr/src/app/dist ./dist
