@@ -133,9 +133,6 @@ router.get("/stream/:torrentUri/:filePath", async (req, res) => {
       streamClosed(hash, file.name);
     };
 
-    fileStreamOpened(hash, file.path);
-    streamOpened(hash, file.name);
-
     res.on("close", cleanup);
 
     readable.on("data", () => {
@@ -184,10 +181,14 @@ router.get("/stream/:torrentUri/:filePath", async (req, res) => {
       "Cache-Control": "no-cache",
     });
 
+    fileStreamOpened(hash, file.path);
+    streamOpened(hash, file.name);
     try {
       const readable = file.createReadStream();
       pipeWithCleanup(readable);
     } catch {
+      fileStreamClosed(hash, file.path);
+      streamClosed(hash, file.name);
       res.status(500).end();
     }
     return;
@@ -229,10 +230,14 @@ router.get("/stream/:torrentUri/:filePath", async (req, res) => {
     "Cache-Control": "no-cache",
   });
 
+  fileStreamOpened(hash, file.path);
+  streamOpened(hash, file.name);
   try {
     const readable = file.createReadStream({ start, end: safeEnd });
     pipeWithCleanup(readable);
   } catch {
+    fileStreamClosed(hash, file.path);
+    streamClosed(hash, file.name);
     res.status(500).end();
   }
 });

@@ -46,7 +46,29 @@ interface HandlerArgs {
   req: Request;
 }
 
-export const streamHandler = async ({ type, id, config, req }: HandlerArgs) => {
+const defaultStreamConfig: NonNullable<HandlerArgs["config"]> = {
+  enableJackett: "",
+  jackettUrl: "",
+  jackettKey: "",
+  enableNcore: "",
+  nCoreUser: "",
+  nCorePassword: "",
+  enableInsane: "",
+  insaneUser: "",
+  insanePassword: "",
+  enableItorrent: "",
+  enableYts: "",
+  enableEztv: "",
+  searchByTitle: "",
+  disableHdr: "",
+  disableHevc: "",
+  disable4k: "",
+  disableCam: "",
+  disable3d: "",
+};
+
+export const streamHandler = async ({ type, id, config: cfg, req }: HandlerArgs) => {
+  const config = { ...defaultStreamConfig, ...cfg };
   let torrents: TorrentSearchResult[] = [];
   const categories: TorrentCategory[] = [];
 

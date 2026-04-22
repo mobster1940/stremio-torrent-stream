@@ -56,6 +56,17 @@ const SEED_TIME = Number(process.env.SEED_TIME) || 60 * 1000;
 
 const TORRENT_TIMEOUT = Number(process.env.TORRENT_TIMEOUT) || 5 * 1000;
 
+/**
+ * Opt-in only. If true, WebTorrent skips the initial on-disk piece scan and assumes
+ * the store is complete — on an empty or fresh download dir that marks 100% with
+ * no real data and breaks streaming. Use only with KEEP_DOWNLOADED_FILES and
+ * data you know is a full, valid copy.
+ */
+const SKIP_INITIAL_VERIFY =
+  process.env.WEBTORRENT_SKIP_INITIAL_VERIFY === "true";
+
+const STORE_CACHE_SLOTS = Number(process.env.WEBTORRENT_STORE_CACHE_SLOTS) || 64;
+
 const infoClient = new WebTorrent();
 
 const streamClient = new WebTorrent({
@@ -63,9 +74,9 @@ const streamClient = new WebTorrent({
   downloadLimit: DOWNLOAD_SPEED_LIMIT,
   uploadLimit: UPLOAD_SPEED_LIMIT,
   maxConns: MAX_CONNS_PER_TORRENT,
+  // note: there is no client-level "verify: false" in the WebTorrent API; use skipVerify on add() below
   // @ts-ignore
-  verify: false,
-  storeCacheSlots: 20
+  storeCacheSlots: STORE_CACHE_SLOTS
 });
 
 streamClient.on("torrent", (torrent) => {
@@ -117,6 +128,22 @@ export const getStats = () => {
   };
 };
 
+/**
+ * discovery.complete() starts the "download finished" tracker announce. WebTorrent
+ * calls it in the same callback chain as the last piece's SHA1 + store.put, which
+ * can contend with the active file read. Run it on the next event-loop turn.
+ */
+const deferDiscoveryComplete = (torrent: Torrent) => {
+  const disc = (torrent as any).discovery;
+  if (!disc || typeof disc.complete !== "function") return;
+  const orig = disc.complete.bind(disc);
+  disc.complete = (opts?: unknown) => {
+    setImmediate(() => {
+      if ((torrent as any).destroyed) return;
+      orig(opts);
+    });
+  };
+};
 
 export const getOrAddTorrent = (uri: string) =>
   new Promise<Torrent | undefined>((resolve) => {
@@ -127,22 +154,39 @@ export const getOrAddTorrent = (uri: string) =>
         destroyStoreOnDestroy: !KEEP_DOWNLOADED_FILES,
         // @ts-ignore
         deselect: true,
+        // @ts-ignore — only when WEBTORRENT_SKIP_INITIAL_VERIFY=true; default false
+        skipVerify: SKIP_INITIAL_VERIFY,
       },
       (torrent) => {
         clearTimeout(timeout);
+        deferDiscoveryComplete(torrent);
 
         // When the torrent completes, WebTorrent resets internal piece priorities
-        // which can stall active streams for ~10 seconds. Re-select open files to
-        // restore priority and prevent the buffering pause.
+        // which can stall active streams for ~10 seconds. Re-select and re-apply
+        // critical() after a tick so we run after that reset; see router stream
+        // registration before createReadStream to avoid a race on getOpenFilePaths.
         torrent.on("done", () => {
-          const openPaths = getOpenFilePaths(torrent.infoHash);
-          if (openPaths.length > 0) {
-            torrent.files.forEach((f: any) => {
+          setImmediate(() => {
+            const openPaths = getOpenFilePaths(torrent.infoHash);
+            if (openPaths.length === 0) return;
+
+            const pieceLength = torrent.pieceLength;
+            const critical = (torrent as any).critical;
+            for (const f of torrent.files as any[]) {
+              if (!openPaths.includes(f.path)) continue;
               try {
-                if (openPaths.includes(f.path)) f.select?.();
+                f.select?.();
+                if (pieceLength && typeof critical === "function" && f.length > 0) {
+                  const fileStartPiece = f._startPiece ?? 0;
+                  const endByte = f.length - 1;
+                  const sp = fileStartPiece;
+                  const ep =
+                    fileStartPiece + Math.floor(endByte / pieceLength);
+                  critical(sp, ep);
+                }
               } catch {}
-            });
-          }
+            }
+          });
         });
 
         resolve(torrent);
